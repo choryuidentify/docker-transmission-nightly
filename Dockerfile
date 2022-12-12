@@ -1,6 +1,44 @@
 # syntax=docker/dockerfile:1
 
-FROM ghcr.io/linuxserver/baseimage-alpine:3.16
+FROM alpine:3.16 as build
+
+RUN \
+  apk add --no-cache --upgrade --virtual=build-dependencies \
+    make \
+    g++ \
+    gcc \
+    cmake \
+    ninja \
+    git \
+    gettext \
+    xz \
+    curl-dev \
+    python3 \
+    musl-libintl \
+    linux-headers && \
+  git clone https://github.com/transmission/transmission && \
+  cd transmission; \
+  git submodule update --init --recursive; \
+  cmake \
+      -S . \
+      -B obj \
+      -G Ninja \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DENABLE_CLI=ON \
+      -DENABLE_DAEMON=ON \
+      -DENABLE_GTK=OFF \
+      -DENABLE_MAC=OFF \
+      -DENABLE_QT=OFF \
+      -DENABLE_TESTS=OFF \
+      -DENABLE_UTILS=ON \
+      -DENABLE_WEB=OFF \
+      -DRUN_CLANG_TIDY=OFF; \
+  cmake --build obj --config RelWithDebInfo; \
+  cmake --build obj --config RelWithDebInfo --target install/strip;
+
+# ----------------------------------------------------------------
+
+FROM ghcr.io/linuxserver/baseimage-alpine:3.16 as runtime
 
 ARG UNRAR_VERSION=6.1.7
 ARG BUILD_DATE
@@ -8,6 +46,11 @@ ARG VERSION
 ARG TRANSMISSION_VERSION
 LABEL build_version="Linuxserver.io version:- ${VERSION} Build-date:- ${BUILD_DATE}"
 LABEL maintainer="aptalca"
+
+COPY --from=build /usr/local/share/transmission /usr/share/transmission 
+COPY --from=build /usr/local/share/doc/transmission /usr/share/doc/transmission
+COPY --from=build /usr/local/bin/transmission-* /usr/bin/
+COPY --from=build /usr/local/share/man/man1/transmission-* /usr/share/man/man1/
 
 RUN \
   echo "**** install build packages ****" && \
@@ -19,9 +62,7 @@ RUN \
   apk add --no-cache \
     openssl \
     p7zip \
-    python3 \
-    transmission-cli \
-    transmission-daemon && \
+    python3 && \
   echo "**** install unrar from source ****" && \
   mkdir /tmp/unrar && \
   curl -o \
@@ -33,48 +74,6 @@ RUN \
   cd /tmp/unrar && \
   make && \
   install -v -m755 unrar /usr/local/bin && \
-  echo "**** install third party themes ****" && \
-  TRANSMISSIONIC_VERSION=$(curl -s "https://api.github.com/repos/6c65726f79/Transmissionic/releases/latest" | jq -r .tag_name) && \
-  curl -o \
-    /tmp/transmissionic.zip -L \
-    "https://github.com/6c65726f79/Transmissionic/releases/download/${TRANSMISSIONIC_VERSION}/Transmissionic-webui-${TRANSMISSIONIC_VERSION}.zip" && \
-  unzip \
-    /tmp/transmissionic.zip -d \
-    /tmp && \
-  mv /tmp/web /transmissionic && \
-  curl -o \
-    /tmp/combustion.zip -L \
-    "https://github.com/Secretmapper/combustion/archive/release.zip" && \
-  unzip \
-    /tmp/combustion.zip -d \
-    / && \
-  mkdir -p /tmp/twctemp && \
-  TWCVERSION=$(curl -s "https://api.github.com/repos/ronggang/transmission-web-control/releases/latest" | jq -r .tag_name) && \
-  curl -o \
-    /tmp/twc.tar.gz -L \
-    "https://github.com/ronggang/transmission-web-control/archive/${TWCVERSION}.tar.gz" && \
-  tar xf \
-    /tmp/twc.tar.gz -C \
-    /tmp/twctemp --strip-components=1 && \
-  mv /tmp/twctemp/src /transmission-web-control && \
-  # Enables the original UI button in transmission-web-control
-  ln -s /usr/share/transmission/web/style /transmission-web-control && \
-  ln -s /usr/share/transmission/web/images /transmission-web-control && \
-  ln -s /usr/share/transmission/web/javascript /transmission-web-control && \
-  ln -s /usr/share/transmission/web/index.html /transmission-web-control/index.original.html && \
-  mkdir -p /kettu && \
-  curl -o \
-    /tmp/kettu.tar.gz -L \
-    "https://github.com/endor/kettu/archive/master.tar.gz" && \
-  tar xf \
-    /tmp/kettu.tar.gz -C \
-    /kettu --strip-components=1 && \
-  curl -o \
-    /tmp/flood-for-transmission.tar.gz -L \
-    "https://github.com/johman10/flood-for-transmission/releases/download/latest/flood-for-transmission.tar.gz" && \
-  tar xf \
-    /tmp/flood-for-transmission.tar.gz -C \
-    / && \
   echo "**** cleanup ****" && \
   apk del --purge \
     build-dependencies && \
